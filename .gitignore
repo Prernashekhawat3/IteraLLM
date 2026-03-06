@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Secrets — NEVER commit
+.env
+*.key
+
+# Rust
+router_rs/target/
+
+# Docker volumes
+postgres_data/
+grafana_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
