@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     # Kafka
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_feedback_topic: str = "feedback-events"
+    kafka_chat_events_topic: str = "chat-events"
 
     # LLM
     llm_provider: str = "openai"
@@ -17,12 +18,14 @@ class Settings(BaseSettings):
 
     # App
     app_env: str = "development"
+    app_port: int = 8000
     log_level: str = "INFO"
     max_history_turns: int = 20
     session_ttl_seconds: int = 3600
 
     # Observability
     enable_metrics: bool = True
+    metrics_port: int = 9090
 
     class Config:
         env_file = ".env"

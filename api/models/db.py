@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import (
     Column, String, Text, DateTime,
     Integer, JSON, ForeignKey, Index
@@ -19,9 +19,9 @@ class Conversation(Base):
                 default=lambda: str(uuid.uuid4()))
     user_id      = Column(String(128), nullable=False)
     title        = Column(String(255), nullable=True)
-    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc),
-                          onupdate=lambda: datetime.now(timezone.utc))
+    created_at   = Column(DateTime, default=datetime.utcnow())
+    updated_at   = Column(DateTime, default=datetime.utcnow(),
+                          onupdate=datetime.utcnow())
     meta         = Column(JSON, default=dict)  # flexible extra data
 
     messages = relationship("Message", back_populates="conversation",
@@ -50,7 +50,7 @@ class Message(Base):
     prompt_tokens   = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     created_at      = Column(DateTime,
-                             default=lambda: datetime.now(timezone.utc))
+                             default=datetime.utcnow())
 
     conversation = relationship("Conversation", back_populates="messages")
 
