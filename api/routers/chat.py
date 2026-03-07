@@ -5,18 +5,21 @@ from datetime import datetime
 
 from api.database import get_db
 from api.models.db import Conversation, Message
-from api.models.schemas import ChatRequest, ChatResponse, ConversationHistory, MessageOut
+from api.models.schemas import (
+    ChatRequest, ChatResponse, ConversationHistory, MessageOut
+)
 from api.services.llm import get_llm_provider
+from api.services.cache import get_session_cache   # ← NEW
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-@router.post("/send", response_model=ChatResponse, status_code=200)
+@router.post("/send", response_model=ChatResponse)
 async def send_message(
     req: ChatRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Send a message and get an AI response."""
+    cache = get_session_cache()
 
     # ── Step 1: Get or create conversation ────────────
     if req.conversation_id:
@@ -29,25 +32,35 @@ async def send_message(
     else:
         conversation = Conversation(user_id=req.user_id)
         db.add(conversation)
-        await db.flush()  # get the ID without committing
+        await db.flush()
 
-    # ── Step 2: Load conversation history from DB ──────
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at)
-        .limit(20)  # last 20 turns = context window
-    )
-    history = result.scalars().all()
+    # ── Step 2: Cache-first history load ──────────────
+    cached_history = await cache.get_history(conversation.id)
 
-    # Format history for LLM
-    llm_messages = [
-        {"role": msg.role, "content": msg.content}
-        for msg in history
-    ]
-    llm_messages.append({"role": "user", "content": req.message})
+    if cached_history is not None:
+        # ✅ Cache HIT — no DB query needed
+        llm_messages = cached_history
+    else:
+        # ❌ Cache MISS — load from Postgres, warm cache
+        result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation.id)
+            .order_by(Message.created_at)
+            .limit(20)
+        )
+        db_messages = result.scalars().all()
+        llm_messages = [
+            {"role": m.role, "content": m.content}
+            for m in db_messages
+        ]
+        # Warm the cache so next request is a hit
+        await cache.set_history(conversation.id, llm_messages)
 
-    # ── Step 3: Save user message ──────────────────────
+    # ── Step 3: Add current user message ──────────────
+    user_message = {"role": "user", "content": req.message}
+    llm_messages_with_current = llm_messages + [user_message]
+
+    # ── Step 4: Save user message to DB ───────────────
     user_msg = Message(
         conversation_id=conversation.id,
         role="user",
@@ -56,14 +69,14 @@ async def send_message(
     )
     db.add(user_msg)
 
-    # ── Step 4: Call LLM ───────────────────────────────
+    # ── Step 5: Call LLM ───────────────────────────────
     llm = get_llm_provider()
     llm_response = await llm.complete(
-        messages=llm_messages,
+        messages=llm_messages_with_current,
         system_prompt="You are a helpful assistant.",
     )
 
-    # ── Step 5: Save assistant response ───────────────
+    # ── Step 6: Save assistant response to DB ─────────
     assistant_msg = Message(
         conversation_id=conversation.id,
         role="assistant",
@@ -77,7 +90,13 @@ async def send_message(
     )
     db.add(assistant_msg)
     await db.flush()
-    # db session commits automatically via get_db() dependency
+
+    # ── Step 7: Update cache with both new messages ────
+    await cache.append_message(conversation.id, user_message)
+    await cache.append_message(
+        conversation.id,
+        {"role": "assistant", "content": llm_response.content}
+    )
 
     return ChatResponse(
         conversation_id=conversation.id,
@@ -86,7 +105,7 @@ async def send_message(
         model=llm_response.model,
         provider=llm_response.provider,
         latency_ms=llm_response.latency_ms,
-        variant="control",  # will be dynamic in Phase 3
+        variant="control",
         created_at=assistant_msg.created_at,
     )
 
@@ -96,7 +115,6 @@ async def get_history(
     conversation_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Fetch full message history for a conversation."""
     result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
     )
@@ -110,7 +128,6 @@ async def get_history(
         .order_by(Message.created_at)
     )
     messages = result.scalars().all()
-
     return ConversationHistory(
         conversation_id=conv.id,
         user_id=conv.user_id,

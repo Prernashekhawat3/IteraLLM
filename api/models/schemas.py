@@ -52,4 +52,5 @@ class ConversationHistory(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     db: str
+    redis: str = "unknown"   
     version: str = "1.0.0"
