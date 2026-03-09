@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from api.metrics import LLM_LATENCY, LLM_TOKENS, CACHE_HITS
 from datetime import datetime
+
 
 from api.database import get_db
 from api.models.db import Conversation, Message
@@ -60,6 +62,13 @@ async def send_message(
     user_message = {"role": "user", "content": req.message}
     llm_messages_with_current = llm_messages + [user_message]
 
+    # After cache check — record hit or miss
+    if cached_history is not None:
+        CACHE_HITS.labels(result="hit").inc()
+        llm_messages = cached_history
+    else:
+        CACHE_HITS.labels(result="miss").inc()
+
     # ── Step 4: Save user message to DB ───────────────
     user_msg = Message(
         conversation_id=conversation.id,
@@ -75,6 +84,16 @@ async def send_message(
         messages=llm_messages_with_current,
         system_prompt="You are a helpful assistant.",
     )
+
+    LLM_LATENCY.labels(
+        model=llm_response.model,
+        provider=llm_response.provider,
+    ).observe(llm_response.latency_ms)
+
+    if llm_response.prompt_tokens:
+        LLM_TOKENS.labels(model=llm_response.model, token_type="prompt").inc(llm_response.prompt_tokens)
+    if llm_response.completion_tokens:
+        LLM_TOKENS.labels(model=llm_response.model, token_type="completion").inc(llm_response.completion_tokens)
 
     # ── Step 6: Save assistant response to DB ─────────
     assistant_msg = Message(

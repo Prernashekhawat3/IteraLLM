@@ -1,6 +1,19 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from api.services.kafka_producer import get_producer, stop_producer
+from contextlib import asynccontextmanager
+from api.routers import chat, health, arena, feedback
+
+import time
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from api.metrics import HTTP_REQUESTS, HTTP_DURATION
+# from api.metrics import ACTIVE_EXPERIMENTS
+# from experimenter.store import get_experiment_store
+
 
 from api.routers import chat, health, arena
 from api.database import engine
@@ -13,6 +26,41 @@ async def lifespan(app: FastAPI):
     yield
     await engine.dispose()
 
+@asynccontextmanager
+async def lifespan(app):
+    # store = get_experiment_store()
+    # ACTIVE_EXPERIMENTS.set(len(store.get_active()))
+    # Startup
+    await get_producer()   # pre-connect to Kafka
+    yield
+    # Shutdown
+    await stop_producer()
+
+# ── Metrics middleware ─────────────────────────────────────
+class MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.monotonic()
+        response = await call_next(request)
+        duration = (time.monotonic() - start) * 1000
+
+        # Normalize path — replace UUIDs with {id} placeholder
+        path = request.url.path
+        for segment in path.split("/"):
+            if len(segment) == 36 and segment.count("-") == 4:
+                path = path.replace(segment, "{id}")
+
+        HTTP_REQUESTS.labels(
+            method=request.method,
+            endpoint=path,
+            status_code=str(response.status_code),
+        ).inc()
+        HTTP_DURATION.labels(
+            method=request.method,
+            endpoint=path,
+        ).observe(duration)
+        return response
+
+app = FastAPI(title="IteraLLM", lifespan=lifespan)
 
 app = FastAPI(
     title="IteraLLM",
@@ -28,6 +76,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── /metrics endpoint for Prometheus scraping ─────────────
+@app.get("/metrics")
+async def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
+
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(arena.router)
+app.include_router(feedback.router)
+app.add_middleware(MetricsMiddleware)

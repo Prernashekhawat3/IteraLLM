@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from api.models.arena import ArenaRequest, ArenaResponse, MODEL_COSTS
 from api.services.arena import run_arena
+from api.metrics import ARENA_COMPARISONS, LLM_LATENCY, LLM_TOKENS
 
 router = APIRouter(prefix="/arena", tags=["arena"])
 
@@ -11,7 +12,21 @@ async def compare_models(req: ArenaRequest):
     Send the same prompt to multiple LLMs simultaneously.
     Returns all responses with latency, tokens, and cost.
     """
-    return await run_arena(req)
+    result = await run_arena(req)
+
+    # Record arena comparison count
+    ARENA_COMPARISONS.labels(model_count=str(len(req.models))).inc()
+
+    # Record per-model latency + tokens from arena results
+    for r in result.results:
+        if r.status == "success" and r.latency_ms:
+            LLM_LATENCY.labels(model=r.model, provider=r.provider).observe(r.latency_ms)
+        if r.prompt_tokens:
+            LLM_TOKENS.labels(model=r.model, token_type="prompt").inc(r.prompt_tokens)
+        if r.completion_tokens:
+            LLM_TOKENS.labels(model=r.model, token_type="completion").inc(r.completion_tokens)
+
+    return result
 
 
 @router.get("/models")

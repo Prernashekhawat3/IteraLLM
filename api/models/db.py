@@ -58,3 +58,24 @@ class Message(Base):
         Index("idx_msg_conv_id", "conversation_id"),
         Index("idx_msg_created", "created_at"),
     )
+
+class Feedback(Base):
+    """Stores thumbs up/down signals from users per message."""
+    __tablename__ = "feedback"
+
+    id                 = Column(String(36), primary_key=True,
+                                default=lambda: str(uuid.uuid4()))
+    message_id         = Column(String(36), ForeignKey("messages.id",
+                                ondelete="CASCADE"), nullable=False)
+    conversation_id    = Column(String(36), nullable=False)
+    user_id            = Column(String(128), nullable=False)
+    rating             = Column(String(16), nullable=False)  # "thumbs_up" | "thumbs_down"
+    experiment_variant = Column(String(64), nullable=True)   # copied from message
+    comment            = Column(Text, nullable=True)            # optional text note
+    created_at         = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_feedback_message_id", "message_id"),
+        Index("idx_feedback_user_id", "user_id"),
+        Index("idx_feedback_variant", "experiment_variant"),
+    )
