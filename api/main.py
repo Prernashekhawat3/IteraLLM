@@ -2,10 +2,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import chat, health
+from api.routers import chat, health, arena
 from api.database import engine
 from api.models.db import Base
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,3 +30,4 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(arena.router)
