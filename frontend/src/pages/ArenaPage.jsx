@@ -4,15 +4,15 @@ import { Zap, DollarSign, Hash, Loader2, Trophy } from 'lucide-react'
 import { compareModels, listModels } from '../api'
 
 const AVAILABLE_MODELS = [
-  { id: 'gpt-4o-mini',            label: 'GPT-4o-mini',    color: '#00ff9d' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku',   color: '#bc8cff' },
-  { id: 'groq',                   label: 'Groq',         color: '#ffb347' },
-  { id: 'gpt-4o',                    label: 'GPT-4o',         color: '#00d4ff' },
+  { id: 'claude-haiku-4-5-20251001',    label: 'Claude Haiku',  color: '#bc8cff' },
+  { id: 'groq/llama-3.3-70b-versatile', label: 'Groq LLaMA 70B', color: '#00ff9d' },
+  { id: 'groq/llama-3.1-8b-instant',    label: 'Groq LLaMA 8B',  color: '#ffb347' },
+  { id: 'gemini-2.0-flash',             label: 'Gemini 2.0',     color: '#00d4ff' },
 ]
 
 export default function ArenaPage() {
   const [prompt, setPrompt]           = useState('')
-  const [selected, setSelected]       = useState(['gpt-4o-mini', 'claude-haiku-4-5-20251001'])
+  const [selected, setSelected]       = useState(['groq/llama-3.3-70b-versatile', 'claude-haiku-4-5-20251001'])
   const [systemPrompt, setSystemPrompt] = useState('You are a helpful assistant.')
   const [results, setResults]         = useState(null)
   const [loading, setLoading]         = useState(false)

@@ -13,28 +13,21 @@ from api.models.arena import (
 
 def _get_provider(model: str) -> str:
     """Infer provider from model name prefix."""
-    if model.startswith("gpt"):     return "openai"
-    if model.startswith("claude"):  return "anthropic"
-    if model.startswith("gemini"):  return "google"
-    if model.startswith("groq/"):   return "groq"
+    if model.startswith("gpt"):    return "openai"
+    if model.startswith("claude"): return "anthropic"
+    if model.startswith("gemini"): return "google"
+    if model.startswith("groq/"):  return "groq"
     return "unknown"
 
 
 async def _call_openai(
     model: str, messages: list, max_tokens: int, temperature: float
 ) -> ModelResult:
-    """Call OpenAI or xAI (same SDK, different base_url)."""
+    """Call OpenAI models."""
     settings = get_settings()
     start = time.monotonic()
     try:
-        if model.startswith("grok"):
-            client = AsyncOpenAI(
-                api_key=settings.xai_api_key,
-                base_url="https://api.x.ai/v1"
-            )
-        else:
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
-
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
         resp = await client.chat.completions.create(
             model=model,
             messages=messages,
@@ -46,7 +39,7 @@ async def _call_openai(
         ct = resp.usage.completion_tokens
         return ModelResult(
             model=model,
-            provider="xai" if model.startswith("grok") else "openai",
+            provider="openai",
             content=resp.choices[0].message.content,
             latency_ms=latency,
             prompt_tokens=pt,
@@ -57,7 +50,7 @@ async def _call_openai(
     except Exception as e:
         return ModelResult(
             model=model,
-            provider=_get_provider(model),
+            provider="openai",
             status="error",
             error=str(e)[:200],
         )
@@ -105,8 +98,7 @@ async def _call_groq(
 ) -> ModelResult:
     """Call Groq inference API (OpenAI-compatible, ultra-fast LLaMA/Mixtral)."""
     settings = get_settings()
-    # Strip the "groq/" prefix for the actual API call
-    model_name = model.replace("groq/", "")
+    model_name = model.replace("groq/", "")  # strip prefix for API call
     start = time.monotonic()
     try:
         client = AsyncOpenAI(
@@ -129,7 +121,7 @@ async def _call_groq(
             latency_ms=latency,
             prompt_tokens=pt,
             completion_tokens=ct,
-            cost_usd=0.0,  # Groq free tier
+            cost_usd=0.0,
             status="success",
         )
     except Exception as e:
@@ -140,6 +132,7 @@ async def _call_groq(
             error=str(e)[:200],
         )
 
+
 async def _call_gemini(
     model: str, prompt: str, system_prompt: str, max_tokens: int
 ) -> ModelResult:
@@ -147,10 +140,11 @@ async def _call_gemini(
     import google.generativeai as genai
     settings = get_settings()
     genai.configure(api_key=settings.google_api_key)
+    model_name = model.replace("models/", "")  # strip prefix if present
     start = time.monotonic()
     try:
         gemini = genai.GenerativeModel(
-            model_name=model,
+            model_name=model_name,
             system_instruction=system_prompt,
         )
         resp = await asyncio.to_thread(
@@ -168,16 +162,20 @@ async def _call_gemini(
             latency_ms=latency,
             prompt_tokens=pt,
             completion_tokens=ct,
-            cost_usd=round(estimate_cost(model, pt, ct), 8),
+            cost_usd=0.0,
             status="success",
         )
     except Exception as e:
+        err = str(e)[:200]
+        if "429" in err:
+            err = "Rate limit — Gemini free tier: 15 req/min. Wait 60s."
         return ModelResult(
             model=model,
             provider="google",
             status="error",
-            error=str(e)[:200],
+            error=err,
         )
+
 
 async def run_arena(req: ArenaRequest) -> ArenaResponse:
     """
@@ -186,16 +184,12 @@ async def run_arena(req: ArenaRequest) -> ArenaResponse:
     """
     wall_start = time.monotonic()
 
-    # Build user message list once — shared across all model calls
     messages = [{"role": "user", "content": req.prompt}]
-
-    # OpenAI-compatible calls need system prompt prepended
     messages_with_system = [
         {"role": "system", "content": req.system_prompt},
         *messages,
     ]
 
-    # Build coroutine list — one per model
     tasks = []
     for model in req.models:
         provider = _get_provider(model)
@@ -209,24 +203,22 @@ async def run_arena(req: ArenaRequest) -> ArenaResponse:
                 model, messages_with_system,
                 req.max_tokens, req.temperature,
             ))
-        elif provider == "google":                    
+        elif provider == "google":
             tasks.append(_call_gemini(
                 model, req.prompt, req.system_prompt,
                 req.max_tokens,
             ))
         else:
-            # openai
+            # openai fallback
             tasks.append(_call_openai(
                 model, messages_with_system,
                 req.max_tokens, req.temperature,
             ))
 
-    # All models called in parallel
     results: list[ModelResult] = await asyncio.gather(*tasks)
 
     total_ms = int((time.monotonic() - wall_start) * 1000)
 
-    # Find fastest and cheapest among successful results
     successful = [r for r in results if r.status == "success"]
     fastest  = min(successful, key=lambda r: r.latency_ms or 999999, default=None)
     cheapest = min(successful, key=lambda r: r.cost_usd  or 999999, default=None)
