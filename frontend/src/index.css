@@ -1,83 +1,48 @@
-/* IBM Plex Mono for code/numbers */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Fraunces:ital,wght@0,700;0,900;1,300&family=DM+Sans:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Fraunces:ital,wght@0,700;0,900;1,300&family=DM+Sans:wght@300;400;500;600&family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 @import "tailwindcss";
 
-* { box-sizing: border-box; }
-body {
-  background: #05080d;
-  color: #dce8f5;
-  font-family: 'DM Sans', sans-serif;
-  margin: 0;
-}
-.font-mono { font-family: 'IBM Plex Mono', monospace; }
-.font-display { font-family: 'Fraunces', serif; }
+@theme {
+  --color-primary: #40baf7;
+  --color-accent-purple: #8A2BE2;
+  --color-background-light: #f5f7f8;
+  --color-background-dark: #0B0F19;
+  --color-slate-card: #1A2332;
+  --color-slate-panel: #1A2332;
 
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --font-display: "Inter", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --font-sans: "Inter", sans-serif;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+@layer base {
+  body {
+    background-color: var(--color-background-dark);
+    color: #dce8f5;
   }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+}
+
+.glass-card {
+  background: rgba(26, 35, 50, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(64, 186, 247, 0.1);
+}
+
+.glass-panel {
+  background: rgba(26, 35, 50, 0.5);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.neon-line {
+  box-shadow: 0 0 8px rgba(64, 186, 247, 0.5);
+}
+
+.hero-gradient {
+  background: radial-gradient(circle at 50% 0%, rgba(64, 186, 247, 0.15) 0%, transparent 50%);
+}
+
+.terminal-header {
+  background: linear-gradient(to right, #1a2332, #0b0f19);
 }
