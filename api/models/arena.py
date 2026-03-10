@@ -10,8 +10,10 @@ MODEL_COSTS: dict[str, dict[str, float]] = {
     "gpt-4o":                   {"input": 2.50,  "output": 10.00},
     "claude-haiku-4-5-20251001":   {"input": 0.80,  "output": 4.00},
     "claude-sonnet-4-5":        {"input": 3.00,  "output": 15.00},
-    "grok-2":                   {"input": 2.00,  "output": 10.00},
-    "grok-2-mini":              {"input": 0.20,  "output": 0.40},
+    "groq/llama-3.3-70b-versatile": {"input": 0.0, "output": 0.0},  # free tier
+    "groq/llama-3.1-8b-instant":    {"input": 0.0, "output": 0.0},  # free tier
+    "groq/mixtral-8x7b-32768":      {"input": 0.0, "output": 0.0},  # free tier
+    "gemini-2.0-flash": {"input": 0.0, "output": 0.0},  
     "gemini-1.5-flash":         {"input": 0.075, "output": 0.30},
     "gemini-1.5-pro":           {"input": 1.25,  "output": 5.00},
 }

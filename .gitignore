@@ -10,6 +10,9 @@ __pycache__/
 .env
 *.key
 
+node_modules/
+.DS_Store
+
 # Rust
 router_rs/target/
 
