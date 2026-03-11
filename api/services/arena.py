@@ -140,7 +140,7 @@ async def _call_gemini(
     import google.generativeai as genai
     settings = get_settings()
     genai.configure(api_key=settings.google_api_key)
-    model_name = model.replace("models/", "")  # strip prefix if present
+    model_name = model.replace("models/", "")  
     start = time.monotonic()
     try:
         gemini = genai.GenerativeModel(
