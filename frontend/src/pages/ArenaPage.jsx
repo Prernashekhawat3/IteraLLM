@@ -85,7 +85,7 @@ export default function ArenaPage() {
     setFinishedStreams({})
     setLines([])
     try {
-      const data = await compareModels(prompt, selected, systemPrompt, 512)
+      const data = await compareModels(prompt, selected, systemPrompt, 2048)
       setResults(data)
     } catch (e) {
       setError('Comparison failed. Check your API keys and server.')
@@ -285,9 +285,10 @@ export default function ArenaPage() {
             const oMatch = resultData.content.match(/<output>([\s\S]*?)(?:<\/output>|$)/i);
             if (tMatch) parsedThinking = tMatch[1].trim();
             if (oMatch) parsedOutput = oMatch[1].trim();
-            if (tMatch && !oMatch) {
-              // if gave thinking but forgot output tag, treat rest as output
-              parsedOutput = resultData.content.replace(/<thinking>[\s\S]*?<\/thinking>/i, '').trim() || resultData.content;
+
+            if (!oMatch) {
+              // If no clean output tag found, strip all thinking tags and blocks globally
+              parsedOutput = resultData.content.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim() || resultData.content;
             }
           }
 
@@ -349,7 +350,7 @@ export default function ArenaPage() {
             {(() => {
               const bestResult = results?.results?.find(r => r.model === results.fastest_model)
               const oMatch = bestResult?.content?.match(/<output>([\s\S]*?)(?:<\/output>|$)/i);
-              const finalContent = oMatch ? oMatch[1].trim() : bestResult?.content?.replace(/<thinking>[\s\S]*?<\/thinking>/i, '') || '';
+              const finalContent = oMatch ? oMatch[1].trim() : bestResult?.content?.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim() || '';
               return <ReactMarkdown>{finalContent}</ReactMarkdown>
             })()}
           </div>
@@ -545,7 +546,7 @@ function ModelMetricsNode({ resultData, mockAccuracy, color, isWinner, loading }
       </div>
 
       <div className="flex flex-col transition-opacity duration-700" style={{ opacity: resultData ? 1 : 0.4 }}>
-        <span className="text-[10px] text-slate-400">Tokens</span>
+        <span className="text-[10px] text-slate-400">Response Tokens</span>
         <span className="font-mono text-sm font-bold text-slate-100">
           {resultData ? resultData.completion_tokens : '---'}
         </span>
