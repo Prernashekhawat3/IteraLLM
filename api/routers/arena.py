@@ -1,9 +1,17 @@
 from fastapi import APIRouter
-from api.models.arena import ArenaRequest, ArenaResponse, MODEL_COSTS
-from api.services.arena import run_arena
+from api.models.arena import ArenaRequest, ArenaResponse, MODEL_COSTS, ValidationRequest, ValidationResponse
+from api.services.arena import run_arena, validate_config
 from api.metrics import ARENA_COMPARISONS, LLM_LATENCY, LLM_TOKENS
 
 router = APIRouter(prefix="/arena", tags=["arena"])
+
+
+@router.post("/validate", response_model=ValidationResponse)
+async def validate_model_config(req: ValidationRequest):
+    """
+    Validate a model configuration by making a test call.
+    """
+    return await validate_config(req)
 
 
 @router.post("/compare", response_model=ArenaResponse)

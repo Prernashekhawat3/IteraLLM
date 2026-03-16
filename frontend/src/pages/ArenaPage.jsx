@@ -1,14 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { Zap, DollarSign, Hash, Loader2, Play, Target } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { compareModels } from '../api'
+import { validateConfig, compareModels } from '../api'
 
-const AVAILABLE_MODELS = [
-  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku', color: '#bc8cff' },
-  { id: 'groq/llama-3.3-70b-versatile', label: 'Groq LLaMA 70B', color: '#00ff9d' },
-  { id: 'groq/llama-3.1-8b-instant', label: 'Groq LLaMA 8B', color: '#ffb347' },
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0', color: '#00d4ff' },
+const PROVIDERS = [
+  { id: 'groq', label: 'Groq', color: '#00ff9d', icon: 'bolt', suggestions: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'] },
+  { id: 'anthropic', label: 'Anthropic', color: '#bc8cff', icon: 'auto_awesome', suggestions: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'] },
+  { id: 'google', label: 'Google', color: '#00d4ff', icon: 'temp_preferences_custom', suggestions: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'] },
+  { id: 'openai', label: 'OpenAI', color: '#ff4b4b', icon: 'token', suggestions: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini'] },
 ]
+
 
 // Super basic hash to generate consistent "accuracy" numbers based on content length + model id
 function generateMockAccuracy(content, modelId) {
@@ -53,9 +54,23 @@ function useTypewriter(text, speedMs = 15, onComplete) {
   };
 }
 
+const CONFIG_STEPS = {
+  SELECTION: 'selection',
+  TEST: 'test',
+  LIST: 'list',
+  READY: 'ready'
+}
+
 export default function ArenaPage() {
+  const [configStep, setConfigStep] = useState(CONFIG_STEPS.SELECTION)
+  const [configuredModels, setConfiguredModels] = useState(() => {
+    const saved = localStorage.getItem('itera_configured_models')
+    return saved ? JSON.parse(saved) : []
+  })
+  const [currentConfiguring, setCurrentConfiguring] = useState(null)
+
   const [prompt, setPrompt] = useState('')
-  const [selected, setSelected] = useState(['groq/llama-3.3-70b-versatile', 'claude-haiku-4-5-20251001', 'gemini-2.0-flash'])
+  const [selected, setSelected] = useState([])
   const systemPrompt = 'You are a virtual assistant. Before answering, trace your logic step-by-step within <thinking></thinking> tags. Then provide your final formatted answer in <output></output> tags.'
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -70,6 +85,10 @@ export default function ArenaPage() {
   const outputNodeRef = useRef(null)
   const [lines, setLines] = useState([])
 
+  useEffect(() => {
+    localStorage.setItem('itera_configured_models', JSON.stringify(configuredModels))
+  }, [configuredModels])
+
   const toggleModel = (id) => {
     setSelected(s => s.includes(id)
       ? s.filter(m => m !== id)
@@ -78,30 +97,67 @@ export default function ArenaPage() {
   }
 
   const handleCompare = async () => {
-    if (!prompt.trim() || selected.length < 2 || loading) return
+    if (!prompt.trim() || selected.length < 1 || loading) return
     setLoading(true)
     setError(null)
     setResults(null)
     setFinishedStreams({})
     setLines([])
     try {
-      const data = await compareModels(prompt, selected, systemPrompt, 2048)
+      // Build configs object for selected models
+      const configs = selected.reduce((acc, id) => {
+        const m = configuredModels.find(cm => cm.id === id);
+        if (m) {
+          acc[id] = {
+            provider: m.provider,
+            model: m.model,
+            api_key: m.api_key,
+            label: m.label,
+            color: m.color
+          };
+        }
+        return acc;
+      }, {});
+
+      // MOCK check - if any model uses 'bypass', simulate the whole thing for UI testing
+      const hasBypass = Object.values(configs).some(c => c.api_key === 'bypass');
+      if (hasBypass) {
+        await new Promise(r => setTimeout(r, 1000));
+        const mockData = {
+          total_duration_ms: 1500,
+          fastest_model: selected[0],
+          results: selected.map(id => ({
+            model: id,
+            status: 'success',
+            content: `<thinking>Simulating reasoning for ${id}...\nVerified prompt context.\nConstructing response structure.</thinking><output>This is a simulated battle result for **${id}** using the 'bypass' key. The UI flow, graph animations, and output rendering are now verified as functional.</output>`,
+            latency_ms: 600 + Math.floor(Math.random() * 800),
+            completion_tokens: 42
+          }))
+        };
+        setResults(mockData);
+        return;
+      }
+
+      const data = await compareModels(prompt, selected, systemPrompt, 1024, configs)
       setResults(data)
     } catch (e) {
-      setError('Comparison failed. Check your API keys and server.')
+      setError(e.response?.data?.error || e.message || 'Comparison failed. Check your API keys.')
     } finally {
       setLoading(false)
     }
   }
 
   const handleStreamComplete = (modelId) => {
-    setFinishedStreams(prev => ({ ...prev, [modelId]: true }))
+    setFinishedStreams(prev => {
+      if (prev[modelId]) return prev;
+      return { ...prev, [modelId]: true }
+    })
   }
 
   // Draw the SVG connecting paths
   useEffect(() => {
     const updateLines = () => {
-      if (!containerRef.current || !inputNodeRef.current || selected.length === 0) return
+      if (!containerRef.current || !inputNodeRef.current || selected.length === 0 || configStep !== CONFIG_STEPS.READY) return
 
       const containerRect = containerRef.current.getBoundingClientRect()
       const inputRect = inputNodeRef.current.getBoundingClientRect()
@@ -119,14 +175,16 @@ export default function ArenaPage() {
           const endX = (nodeRect.left + nodeRect.width / 2) - containerRect.left
           const endY = nodeRect.top - containerRect.top + 130 // push down to box top
 
-          const modelColor = AVAILABLE_MODELS.find(m => m.id === modelId)?.color || '#ffb347'
+          const modelConfig = configuredModels.find(m => m.id === modelId)
+          const providerInfo = PROVIDERS.find(p => p.id === modelConfig?.provider)
+          const modelColor = modelConfig?.color || providerInfo?.color || '#ffb347'
 
           newLines.push({
             id: `input-to-${modelId}`,
             d: `M ${startX} ${startY} C ${startX} ${startY + 60}, ${endX} ${endY - 60}, ${endX} ${endY}`,
-            color: loading ? '#5a7a99' : (results ? modelColor : '#2a3d52'),
-            active: results !== null,
-            width: results !== null ? 2 : 1
+            color: (loading || results) ? modelColor : '#2a3d52',
+            active: loading || results !== null,
+            width: (loading || results !== null) ? 2 : 1
           })
         }
       })
@@ -138,7 +196,6 @@ export default function ArenaPage() {
       if (allStreamsFinished && outputNodeRef.current) {
         const outputRect = outputNodeRef.current.getBoundingClientRect()
         const finalX = (outputRect.left + outputRect.width / 2) - containerRect.left
-        // Final output node starts further down now
         const finalY = outputRect.top - containerRect.top
 
         selected.forEach(modelId => {
@@ -146,10 +203,11 @@ export default function ArenaPage() {
           if (node) {
             const nodeRect = node.getBoundingClientRect()
             const outX = (nodeRect.left + nodeRect.width / 2) - containerRect.left
-            // Move outY higher to account for metrics padding
             const outY = nodeRect.bottom - containerRect.top - 85
 
-            const modelColor = AVAILABLE_MODELS.find(m => m.id === modelId)?.color || '#ffb347'
+            const modelConfig = configuredModels.find(m => m.id === modelId)
+            const providerInfo = PROVIDERS.find(p => p.id === modelConfig?.provider)
+            const modelColor = modelConfig?.color || providerInfo?.color || '#ffb347'
             const isWinner = results.fastest_model === modelId
             const pathColor = isWinner ? modelColor : '#2a3d52'
 
@@ -167,15 +225,30 @@ export default function ArenaPage() {
       setLines(newLines)
     }
 
-    const timeout = setTimeout(updateLines, 50)
+    const timeout = setTimeout(updateLines, 100)
     window.addEventListener('resize', updateLines)
     return () => {
       clearTimeout(timeout)
       window.removeEventListener('resize', updateLines)
     }
-  }, [selected, results, loading, finishedStreams])
+  }, [selected, results, loading, finishedStreams, configStep, configuredModels])
 
   const allStreamsFinished = results && selected.every(id => finishedStreams[id]);
+
+  if (configStep !== CONFIG_STEPS.READY) {
+    return (
+      <div className="min-h-[calc(100vh-57px)] bg-[#05080d] p-12 flex flex-col items-center">
+        <ConfigFlow
+          step={configStep}
+          setStep={setConfigStep}
+          configuredModels={configuredModels}
+          setConfiguredModels={setConfiguredModels}
+          currentConfiguring={currentConfiguring}
+          setCurrentConfiguring={setCurrentConfiguring}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="h-[calc(100vh-57px)] overflow-y-auto px-6 py-12 max-w-7xl mx-auto flex flex-col items-center relative" ref={containerRef}>
@@ -217,10 +290,12 @@ export default function ArenaPage() {
             <span className="text-xs text-slate-400 font-mono hidden sm:block">TARGETING:</span>
             <div className="flex -space-x-3">
               {selected.map(id => {
-                const model = AVAILABLE_MODELS.find(m => m.id === id)
+                const model = configuredModels.find(m => m.id === id)
+                const providerInfo = PROVIDERS.find(p => p.id === model?.provider)
+                const color = model?.color || providerInfo?.color || '#ccc'
                 return (
-                  <div key={id} className="w-8 h-8 rounded-full border-2 border-[#0B0F19] flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: Object.assign({}, model).color + '33', color: Object.assign({}, model).color }}>
-                    {Object.assign({}, model).label?.charAt(0)}
+                  <div key={id} className="w-8 h-8 rounded-full border-2 border-[#0B0F19] flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: color + '33', color }}>
+                    {model?.label?.charAt(0)}
                   </div>
                 )
               })}
@@ -231,9 +306,17 @@ export default function ArenaPage() {
         {/* Setup Config */}
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <label className="text-xs uppercase tracking-widest text-slate-400 font-bold font-mono">Select Arena Models</label>
+            <div className="flex justify-between items-center mb-1">
+              <label className="text-xs uppercase tracking-widest text-slate-400 font-bold font-mono">Select Arena Models</label>
+              <button 
+                onClick={() => setConfigStep(CONFIG_STEPS.SELECTION)}
+                className="text-[10px] text-primary hover:underline font-mono uppercase tracking-tighter"
+              >
+                + Configure More
+              </button>
+            </div>
             <div className="flex flex-wrap gap-2">
-              {AVAILABLE_MODELS.map(({ id, label, color }) => (
+              {configuredModels.map(({ id, label, color }) => (
                 <button
                   key={id}
                   onClick={() => toggleModel(id)}
@@ -244,6 +327,9 @@ export default function ArenaPage() {
                   {label}
                 </button>
               ))}
+              {configuredModels.length === 0 && (
+                <div className="text-xs text-slate-500 italic">No models configured yet.</div>
+              )}
             </div>
           </div>
         </div>
@@ -259,7 +345,7 @@ export default function ArenaPage() {
           />
           <button
             onClick={handleCompare}
-            disabled={loading || !prompt.trim() || selected.length < 2}
+            disabled={loading || !prompt.trim() || selected.length < 1}
             className="absolute bottom-4 right-4 bg-primary hover:bg-primary/80 disabled:opacity-50 disabled:bg-slate-700 text-[#0B0F19] rounded-xl p-3 flex items-center justify-center transition-all shadow-[0_0_20px_rgba(64,186,247,0.3)] disabled:shadow-none pointer-events-auto cursor-pointer"
           >
             {loading ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} className="fill-current" />}
@@ -270,10 +356,11 @@ export default function ArenaPage() {
       </div>
 
       {/* --- LEVEL 2: COMPREHENSIVE MODEL COLUMNS --- */}
-      <div className={`w-full relative z-10 grid gap-12 mb-20 ${selected.length > 2 ? 'grid-cols-3' : 'grid-cols-2 max-w-5xl'}`}>
+      <div className={`w-full relative z-10 grid gap-12 mb-20 ${selected.length > 2 ? 'grid-cols-3' : (selected.length === 2 ? 'grid-cols-2 max-w-5xl' : 'grid-cols-1 max-w-2xl')}`}>
         {selected.map((modelId) => {
-          const modelInfo = AVAILABLE_MODELS.find(m => m.id === modelId)
-          const color = modelInfo?.color || '#ffb347'
+          const modelInfo = configuredModels.find(m => m.id === modelId)
+          const providerInfo = PROVIDERS.find(p => p.id === modelInfo?.provider)
+          const color = modelInfo?.color || providerInfo?.color || '#ffb347'
 
           const resultData = results?.results?.find(r => r.model === modelId)
 
@@ -304,6 +391,7 @@ export default function ArenaPage() {
               parsedThinking={parsedThinking}
               parsedOutput={parsedOutput}
               loading={loading}
+              error={error}
               isWinner={isWinner}
               onComplete={() => handleStreamComplete(modelId)}
               nodeRef={el => modelNodesRef.current[modelId] = el}
@@ -339,7 +427,7 @@ export default function ArenaPage() {
               <div className="flex flex-col items-center gap-1">
                 <span className="text-[10px] uppercase font-mono text-slate-400">Fastest Model</span>
                 <span className="text-white font-mono font-bold text-xs bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                  {AVAILABLE_MODELS.find(m => m.id === results.fastest_model)?.label || results.fastest_model}
+                  {configuredModels.find(m => m.id === results.fastest_model)?.label || results.fastest_model}
                 </span>
               </div>
             </div>
@@ -361,8 +449,334 @@ export default function ArenaPage() {
   )
 }
 
+// --- New Components for Step-based Flow ---
+
+function ConfigFlow({ step, setStep, configuredModels, setConfiguredModels, currentConfiguring, setCurrentConfiguring }) {
+  const steps = [
+    { id: 'selection', label: 'Model Selection' },
+    { id: 'test', label: 'Test Connection' },
+    { id: 'list', label: 'Configured Models' }
+  ]
+
+  return (
+    <div className="w-full max-w-4xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Progress Tracker */}
+      <div className="flex items-center justify-between mb-16 relative">
+        <div className="absolute top-1/2 left-0 w-full h-px bg-slate-800 -z-10"></div>
+        {steps.map((s, idx) => {
+          const isActive = step === s.id;
+          const isPast = steps.findIndex(x => x.id === step) > idx;
+
+          return (
+            <div key={s.id} className="flex flex-col items-center gap-3 bg-[#05080d] px-4">
+              <div 
+                className={`w-10 h-10 rounded-full border-2 flex items-center justify-center font-mono text-sm font-bold transition-all duration-300 ${
+                  isActive ? 'border-primary text-primary bg-primary/10 shadow-[0_0_15px_rgba(64,186,247,0.3)]' :
+                  isPast ? 'border-green-500 text-green-500 bg-green-500/10' :
+                  'border-slate-800 text-slate-600'
+                }`}
+              >
+                {isPast ? <span className="material-symbols-outlined text-sm">check</span> : idx + 1}
+              </div>
+              <span className={`text-[10px] uppercase tracking-widest font-bold ${isActive ? 'text-white' : 'text-slate-600'}`}>
+                {s.label}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Step Content */}
+      <div className="glass-panel rounded-[2.5rem] p-12 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+           <span className="material-symbols-outlined text-8xl text-primary">
+             {step === 'selection' ? 'list_alt' : step === 'test' ? 'vibrant_content' : 'verified'}
+           </span>
+        </div>
+
+        {step === 'selection' && (
+          <ModelSelectionStep 
+            onNext={(model) => {
+              setCurrentConfiguring(model);
+              setStep('test');
+            }} 
+            configuredModels={configuredModels}
+          />
+        )}
+        {step === 'test' && (
+          <TestConnectionStep 
+            model={currentConfiguring}
+            onBack={() => setStep('selection')}
+            onSuccess={(config) => {
+              const newModel = {
+                ...currentConfiguring,
+                ...config,
+                id: `${currentConfiguring.id}-${Date.now()}` // Unique ID for this instance
+              };
+              setConfiguredModels(prev => [...prev, newModel]);
+              setStep('list');
+            }}
+          />
+        )}
+        {step === 'list' && (
+          <ConfiguredModelsStep 
+            models={configuredModels}
+            onAddAnother={() => setStep('selection')}
+            onFinish={() => setStep('ready')}
+            onRemove={(id) => setConfiguredModels(prev => prev.filter(m => m.id !== id))}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ModelSelectionStep({ onNext }) {
+  const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0])
+  const [modelId, setModelId] = useState('')
+
+  return (
+    <div className="flex flex-col gap-8">
+      <div>
+        <h2 className="text-3xl font-display font-bold text-white mb-2">Configure Model</h2>
+        <p className="text-slate-400">Select a provider and enter any model ID to start a battle.</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-8">
+        <div className="space-y-4">
+           <label className="text-xs font-mono uppercase tracking-widest text-slate-500 font-bold">1. Select Provider</label>
+           <div className="grid grid-cols-2 gap-3">
+             {PROVIDERS.map(p => (
+               <button
+                 key={p.id}
+                 onClick={() => {
+                   setSelectedProvider(p)
+                   setModelId('')
+                 }}
+                 className={`flex items-center gap-3 p-4 rounded-2xl border transition-all ${
+                   selectedProvider.id === p.id 
+                     ? 'bg-primary/10 border-primary text-primary shadow-[0_0_20px_rgba(64,186,247,0.2)]' 
+                     : 'bg-white/5 border-white/5 text-slate-400 hover:border-white/20'
+                 }`}
+               >
+                 <span className="material-symbols-outlined text-xl">{p.icon}</span>
+                 <span className="font-bold text-sm">{p.label}</span>
+               </button>
+             ))}
+           </div>
+        </div>
+
+        <div className="space-y-4">
+           <label className="text-xs font-mono uppercase tracking-widest text-slate-500 font-bold">2. Model Name / ID</label>
+           <div className="space-y-3">
+             <input 
+               type="text"
+               value={modelId}
+               onChange={(e) => setModelId(e.target.value)}
+               placeholder="e.g. llama-3.3-70b"
+               className="w-full bg-black/40 border border-white/10 rounded-2xl px-5 py-4 focus:border-primary/50 outline-none transition-all placeholder:text-slate-700"
+             />
+             
+             <div className="flex flex-wrap gap-2">
+               <span className="text-[10px] text-slate-500 w-full mb-1">Popular Suggestions:</span>
+               {selectedProvider.suggestions.map(s => (
+                 <button 
+                   key={s}
+                   onClick={() => setModelId(s)}
+                   className="text-[10px] bg-white/5 hover:bg-white/10 text-slate-400 px-2 py-1 rounded border border-white/5 hover:border-white/10 transition-colors"
+                 >
+                   {s}
+                 </button>
+               ))}
+             </div>
+           </div>
+        </div>
+      </div>
+
+      <div className="pt-4">
+        <button 
+          disabled={!modelId.trim()}
+          onClick={() => onNext({ ...selectedProvider, model: modelId })}
+          className="w-full py-4 bg-primary text-[#0B0F19] rounded-2xl font-bold hover:scale-[1.02] transition-all disabled:opacity-50 disabled:scale-100"
+        >
+          Setup Connection
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function TestConnectionStep({ model, onBack, onSuccess }) {
+  const [modelDisplayName, setModelDisplayName] = useState(`${model.label} - ${model.model}`)
+  const [apiKey, setApiKey] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [validationResult, setValidationResult] = useState(null)
+
+  const handleTest = async () => {
+    if (!apiKey.trim()) return;
+    setTesting(true);
+    setValidationResult(null);
+    try {
+      if (apiKey === 'bypass') {
+        setValidationResult({ valid: true });
+        return;
+      }
+      const res = await validateConfig(model.id, model.model, apiKey)
+      setValidationResult(res);
+    } catch (err) {
+      setValidationResult({ valid: false, error: err.message || 'Connection failed' });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="flex items-center gap-4">
+        <button onClick={onBack} className="p-2 rounded-full hover:bg-white/10 text-slate-400">
+           <span className="material-symbols-outlined">arrow_back</span>
+        </button>
+        <div>
+          <h2 className="text-3xl font-display font-bold text-white mb-1">Validate Connection</h2>
+          <p className="text-slate-400">Testing <span className="font-bold" style={{ color: model.color }}>{model.model}</span> via {model.label}</p>
+        </div>
+      </div>
+
+      <div className="space-y-6 max-w-lg">
+        <div className="space-y-2">
+          <label className="text-xs font-mono uppercase tracking-widest text-slate-500 font-bold">Display Name</label>
+          <input 
+            type="text" 
+            value={modelDisplayName}
+            onChange={(e) => setModelDisplayName(e.target.value)}
+            className="w-full bg-black/40 border border-white/10 rounded-2xl px-5 py-4 focus:border-primary/50 outline-none transition-all"
+            placeholder="e.g. My Fast Claude"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-mono uppercase tracking-widest text-slate-500 font-bold">API Key</label>
+          <div className="relative">
+            <input 
+              type="password" 
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="w-full bg-black/40 border border-white/10 rounded-2xl px-5 py-4 focus:border-primary/50 outline-none transition-all pr-12"
+              placeholder="sk-..."
+            />
+            {testing && (
+              <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                <Loader2 className="animate-spin text-primary" size={20} />
+              </div>
+            )}
+            {!testing && validationResult?.valid && (
+              <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                 <span className="material-symbols-outlined text-green-500">check_circle</span>
+              </div>
+            )}
+             {!testing && validationResult && !validationResult.valid && (
+              <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                 <span className="material-symbols-outlined text-red-500">cancel</span>
+              </div>
+            )}
+          </div>
+          {validationResult && !validationResult.valid && (
+            <p className="text-red-400 text-[10px] font-mono mt-2 flex items-start gap-1">
+              <span className="material-symbols-outlined text-sm">info</span>
+              {validationResult.error}
+            </p>
+          )}
+        </div>
+
+        <div className="pt-4 flex gap-4">
+          <button 
+            disabled={testing || !apiKey.trim()}
+            onClick={handleTest}
+            className={`flex-1 py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 ${
+              validationResult?.valid ? 'bg-green-600/20 text-green-400 border border-green-500/30' : 'bg-primary text-[#0B0F19] hover:bg-primary/80 shadow-[0_0_20px_rgba(64,186,247,0.3)]'
+            }`}
+          >
+            {testing ? 'Verifying...' : validationResult?.valid ? 'Connection Verified' : 'Test Model Connection'}
+          </button>
+          
+          {validationResult?.valid && (
+            <button 
+              onClick={() => onSuccess({ 
+                label: modelDisplayName, 
+                api_key: apiKey, 
+                provider: model.id,
+                model: model.model,
+                icon: model.icon,
+                color: model.color
+              })}
+              className="px-8 py-4 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold transition-all animate-in fade-in zoom-in duration-300"
+            >
+              Continue
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ConfiguredModelsStep({ models, onAddAnother, onFinish, onRemove }) {
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="flex justify-between items-end">
+        <div>
+          <h2 className="text-3xl font-display font-bold text-white mb-2">Configured Models</h2>
+          <p className="text-slate-400">Total {models.length} models ready for the Arena.</p>
+        </div>
+        <button 
+          onClick={onAddAnother}
+          className="text-xs font-mono font-bold text-primary hover:bg-primary/10 border border-primary/20 px-4 py-2 rounded-full transition-all"
+        >
+          + Add Another
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {models.map(m => (
+          <div key={m.id} className="flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-2xl hover:bg-white/[0.07] transition-all group">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-slate-900" style={{ color: m.color }}>
+                <span className="material-symbols-outlined text-xl">{m.icon}</span>
+              </div>
+              <div>
+                <h4 className="font-bold text-white text-sm">{m.label}</h4>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-500 uppercase">{m.id.split('-')[0]}</span>
+                  <span className="w-1 h-1 rounded-full bg-green-500"></span>
+                  <span className="text-[10px] font-mono text-green-500/80 uppercase">Active</span>
+                </div>
+              </div>
+            </div>
+            <button 
+              onClick={() => onRemove(m.id)}
+              className="p-2 text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+            >
+              <span className="material-symbols-outlined text-sm">delete</span>
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="pt-4">
+        <button 
+          onClick={onFinish}
+          disabled={models.length === 0}
+          className="w-full py-5 bg-primary text-[#0B0F19] rounded-[1.5rem] font-bold text-lg hover:scale-[1.02] transition-all shadow-[0_20px_40px_-10px_rgba(64,186,247,0.3)] disabled:opacity-50 disabled:scale-100"
+        >
+          Proceed to Arena
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // --- Component to coordinate timing --- //
-function ModelColumn({ modelInfo, color, resultData, parsedThinking, parsedOutput, loading, isWinner, onComplete, nodeRef }) {
+function ModelColumn({ modelId, modelInfo, color, resultData, parsedThinking, parsedOutput, loading, error, isWinner, onComplete, nodeRef }) {
   const [thinkingComplete, setThinkingComplete] = useState(false);
 
   useEffect(() => {
@@ -370,8 +784,12 @@ function ModelColumn({ modelInfo, color, resultData, parsedThinking, parsedOutpu
     if (!resultData) setThinkingComplete(false);
   }, [resultData]);
 
+  if (!loading && !resultData && !error) {
+    return <div className="flex flex-col items-center gap-6 w-full opacity-0 pointer-events-none h-[400px]" ref={nodeRef} />;
+  }
+
   return (
-    <div className="flex flex-col items-center gap-6" ref={nodeRef}>
+    <div className="flex flex-col items-center gap-6 w-full animate-in fade-in zoom-in duration-700" ref={nodeRef}>
       <ModelThinkingNode
         resultData={resultData}
         thinkingText={parsedThinking}
@@ -417,8 +835,7 @@ function ModelThinkingNode({ resultData, thinkingText, color, loading, onComplet
       setThoughtSteps([]);
       if (onComplete) onComplete();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thinkingText, resultData, isError]);
+  }, [thinkingText, resultData, isError, onComplete]);
 
   useEffect(() => {
     if (!resultData || isError || thoughtSteps.length === 0) return;
@@ -431,8 +848,7 @@ function ModelThinkingNode({ resultData, thinkingText, color, loading, onComplet
     } else {
       if (onComplete) onComplete();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStepIdx, thoughtSteps.length, resultData, isError]);
+  }, [currentStepIdx, thoughtSteps.length, resultData, isError, onComplete]);
 
   if (!loading && !resultData) return <div className="h-[120px]" />;
 
@@ -480,8 +896,7 @@ function ModelExecutionBox({ modelInfo, color, resultData, outputText, loading, 
   useEffect(() => {
     if (isError && onComplete) onComplete()
     if (resultData && !outputText && onComplete) onComplete()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isError, resultData, outputText])
+  }, [isError, resultData, outputText, onComplete])
 
   return (
     <div
@@ -493,12 +908,6 @@ function ModelExecutionBox({ modelInfo, color, resultData, outputText, loading, 
       </div>
 
       <div className="p-5 grow bg-[#05080d] min-h-[200px] relative custom-scrollbar">
-        {!resultData && !loading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center opacity-30">
-            <span className="material-symbols-outlined text-4xl mb-2">smart_toy</span>
-            <span className="text-[10px] uppercase tracking-widest text-center">Idle</span>
-          </div>
-        )}
 
         {resultData && !showOutput && !isError && (
           <div className="absolute inset-0 flex flex-col items-center justify-center opacity-50">

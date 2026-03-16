@@ -24,8 +24,8 @@ class LLMResponse:
 
 # ── 3B: OpenAI Provider ───────────────────────────────────
 class OpenAIProvider:
-    def __init__(self, api_key: str):
-        self.client = AsyncOpenAI(api_key=api_key)
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     async def complete(
         self,
@@ -106,5 +106,7 @@ def get_llm_provider():
         return OpenAIProvider(api_key=settings.llm_api_key)
     elif provider == "anthropic":
         return AnthropicProvider(api_key=settings.llm_api_key)
+    elif provider == "groq":
+        return OpenAIProvider(api_key=settings.llm_api_key, base_url="https://api.groq.com/openai/v1")
     else:
         raise ValueError(f"Unknown provider: {provider}")

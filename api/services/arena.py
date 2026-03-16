@@ -7,7 +7,8 @@ from anthropic import AsyncAnthropic
 
 from api.config import get_settings
 from api.models.arena import (
-    ArenaRequest, ArenaResponse, ModelResult, estimate_cost
+    ArenaRequest, ArenaResponse, ModelResult, estimate_cost,
+    ValidationRequest, ValidationResponse
 )
 
 
@@ -21,13 +22,14 @@ def _get_provider(model: str) -> str:
 
 
 async def _call_openai(
-    model: str, messages: list, max_tokens: int, temperature: float
+    model: str, messages: list, max_tokens: int, temperature: float, api_key: str = None
 ) -> ModelResult:
     """Call OpenAI models."""
     settings = get_settings()
+    key = api_key or settings.openai_api_key
     start = time.monotonic()
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        client = AsyncOpenAI(api_key=key)
         resp = await client.chat.completions.create(
             model=model,
             messages=messages,
@@ -57,13 +59,14 @@ async def _call_openai(
 
 
 async def _call_anthropic(
-    model: str, messages: list, system: str, max_tokens: int, temperature: float
+    model: str, messages: list, system: str, max_tokens: int, temperature: float, api_key: str = None
 ) -> ModelResult:
     """Call Anthropic Claude models."""
     settings = get_settings()
+    key = api_key or settings.anthropic_api_key
     start = time.monotonic()
     try:
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        client = AsyncAnthropic(api_key=key)
         resp = await client.messages.create(
             model=model,
             system=system,
@@ -94,15 +97,16 @@ async def _call_anthropic(
 
 
 async def _call_groq(
-    model: str, messages: list, max_tokens: int, temperature: float
+    model: str, messages: list, max_tokens: int, temperature: float, api_key: str = None
 ) -> ModelResult:
     """Call Groq inference API (OpenAI-compatible, ultra-fast LLaMA/Mixtral)."""
     settings = get_settings()
+    key = api_key or settings.groq_api_key
     model_name = model.replace("groq/", "")  # strip prefix for API call
     start = time.monotonic()
     try:
         client = AsyncOpenAI(
-            api_key=settings.groq_api_key,
+            api_key=key,
             base_url="https://api.groq.com/openai/v1",
         )
         resp = await client.chat.completions.create(
@@ -134,12 +138,13 @@ async def _call_groq(
 
 
 async def _call_gemini(
-    model: str, prompt: str, system_prompt: str, max_tokens: int
+    model: str, prompt: str, system_prompt: str, max_tokens: int, api_key: str = None
 ) -> ModelResult:
     """Call Google Gemini via google-generativeai SDK."""
     import google.generativeai as genai
     settings = get_settings()
-    genai.configure(api_key=settings.google_api_key)
+    key = api_key or settings.google_api_key
+    genai.configure(api_key=key)
     model_name = model.replace("models/", "")  
     start = time.monotonic()
     try:
@@ -177,6 +182,27 @@ async def _call_gemini(
         )
 
 
+async def validate_config(req: ValidationRequest) -> ValidationResponse:
+    """Validate a single model configuration by making a tiny test call."""
+    try:
+        msg = [{"role": "user", "content": "hi"}]
+        if req.provider == "anthropic":
+            res = await _call_anthropic(req.model, msg, "hi", 1, 0.7, req.api_key)
+        elif req.provider == "groq":
+            res = await _call_groq(req.model, msg, 1, 0.7, req.api_key)
+        elif req.provider == "google":
+            res = await _call_gemini(req.model, "hi", "hi", 1, req.api_key)
+        else:
+            res = await _call_openai(req.model, msg, 1, 0.7, req.api_key)
+        
+        if res.status == "success":
+            return ValidationResponse(valid=True, status="Success")
+        else:
+            return ValidationResponse(valid=False, status="Error", error=res.error)
+    except Exception as e:
+        return ValidationResponse(valid=False, status="Exception", error=str(e))
+
+
 async def run_arena(req: ArenaRequest) -> ArenaResponse:
     """
     Fire all model calls in parallel using asyncio.gather().
@@ -191,31 +217,40 @@ async def run_arena(req: ArenaRequest) -> ArenaResponse:
     ]
 
     tasks = []
-    for model in req.models:
-        provider = _get_provider(model)
+    for model_id in req.models:
+        # Check if we have a dynamic config for this model
+        config = req.configs.get(model_id) if req.configs else None
+        
+        provider = config.provider if config else _get_provider(model_id)
+        api_key = config.api_key if config else None
+        actual_model = config.model if config else model_id
+
         if provider == "anthropic":
             tasks.append(_call_anthropic(
-                model, messages, req.system_prompt,
-                req.max_tokens, req.temperature,
+                actual_model, messages, req.system_prompt,
+                req.max_tokens, req.temperature, api_key
             ))
         elif provider == "groq":
             tasks.append(_call_groq(
-                model, messages_with_system,
-                req.max_tokens, req.temperature,
+                actual_model, messages_with_system,
+                req.max_tokens, req.temperature, api_key
             ))
         elif provider == "google":
             tasks.append(_call_gemini(
-                model, req.prompt, req.system_prompt,
-                req.max_tokens,
+                actual_model, req.prompt, req.system_prompt,
+                req.max_tokens, api_key
             ))
         else:
             # openai fallback
             tasks.append(_call_openai(
-                model, messages_with_system,
-                req.max_tokens, req.temperature,
+                actual_model, messages_with_system,
+                req.max_tokens, req.temperature, api_key
             ))
 
     results: list[ModelResult] = await asyncio.gather(*tasks)
+
+    for idx, r in enumerate(results):
+        r.model = req.models[idx]
 
     total_ms = int((time.monotonic() - wall_start) * 1000)
 

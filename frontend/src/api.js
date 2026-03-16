@@ -11,12 +11,16 @@ export const getHistory = (conversationId) =>
   api.get(`/chat/${conversationId}/history`).then(r => r.data)
 
 // ── Arena ─────────────────────────────────────────────────
-export const compareModels = (prompt, models, systemPrompt, maxTokens) =>
+export const compareModels = (prompt, models, systemPrompt, maxTokens, configs = null) =>
   api.post('/arena/compare', {
     prompt, models,
     system_prompt: systemPrompt,
     max_tokens: maxTokens,
+    configs
   }).then(r => r.data)
+
+export const validateConfig = (provider, model, apiKey) =>
+  api.post('/arena/validate', { provider, model, api_key: apiKey }).then(r => r.data)
 
 export const listModels = () =>
   api.get('/arena/models').then(r => r.data)

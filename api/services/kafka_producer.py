@@ -18,8 +18,13 @@ async def get_producer() -> AIOKafkaProducer:
             key_serializer=lambda k: k.encode("utf-8") if k else None,
             acks="all",           # wait for all replicas — durability
             compression_type="gzip",
+            request_timeout_ms=5000, # 5s timeout instead of infinite hang
         )
-        await _producer.start()
+        try:
+            await asyncio.wait_for(_producer.start(), timeout=10.0)
+        except Exception as e:
+            _producer = None # Reset so we can retry later or handle failure
+            raise ConnectionError(f"Could not connect to Kafka: {e}")
     return _producer
 
 

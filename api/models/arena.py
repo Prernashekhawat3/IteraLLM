@@ -27,17 +27,36 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
     )
 
 
+# ── Configs ──────────────────────────────────────────────────
+class ModelConfig(BaseModel):
+    provider: str
+    model: str
+    api_key: str
+    label: Optional[str] = None
+    color: Optional[str] = None
+
+
 # ── Request ──────────────────────────────────────────────────
 class ArenaRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="The prompt to send to all models")
-    models: list[str] = Field(
-        default=["claude-haiku-4-5-20251001", "groq/llama-3.3-70b-versatile", "gemini-2.0-flash"],
-        description="List of model IDs to compare"
-    )
+    models: list[str] = Field(..., description="List of model IDs to compare")
+    configs: Optional[dict[str, ModelConfig]] = Field(None, description="Mapping of model ID to its configuration (provider, key, etc.)")
     system_prompt: str = "You are a helpful assistant."
     max_tokens: int = Field(512, ge=1, le=4096)
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     save_results: bool = True
+
+
+class ValidationRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: str
+
+
+class ValidationResponse(BaseModel):
+    valid: bool
+    status: str
+    error: Optional[str] = None
 
 
 # ── Per-model result ─────────────────────────────────────────

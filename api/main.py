@@ -21,20 +21,22 @@ from api.models.db import Base
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup
+    # 1. Database tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    yield
-    await engine.dispose()
+    
+    # 2. Kafka Producer (pre-connect)
+    try:
+        await get_producer()
+    except Exception as e:
+        print(f"[Lifespan] Kafka connection failed (non-fatal): {e}")
 
-@asynccontextmanager
-async def lifespan(app):
-    # store = get_experiment_store()
-    # ACTIVE_EXPERIMENTS.set(len(store.get_active()))
-    # Startup
-    await get_producer()   # pre-connect to Kafka
     yield
+
     # Shutdown
     await stop_producer()
+    await engine.dispose()
 
 # ── Metrics middleware ─────────────────────────────────────
 class MetricsMiddleware(BaseHTTPMiddleware):
@@ -59,8 +61,6 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             endpoint=path,
         ).observe(duration)
         return response
-
-app = FastAPI(title="IteraLLM", lifespan=lifespan)
 
 app = FastAPI(
     title="IteraLLM",

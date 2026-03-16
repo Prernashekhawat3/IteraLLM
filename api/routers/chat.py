@@ -80,10 +80,17 @@ async def send_message(
 
     # ── Step 5: Call LLM ───────────────────────────────
     llm = get_llm_provider()
-    llm_response = await llm.complete(
-        messages=llm_messages_with_current,
-        system_prompt="You are a helpful assistant.",
-    )
+    from api.config import get_settings
+    settings = get_settings()
+    
+    try:
+        llm_response = await llm.complete(
+            messages=llm_messages_with_current,
+            model=settings.default_model, # Ensure the right model is used
+            system_prompt="You are a helpful assistant.",
+        )
+    except Exception as e:
+        raise HTTPException(500, f"LLM Provider Error: {str(e)}")
 
     LLM_LATENCY.labels(
         model=llm_response.model,
@@ -109,6 +116,7 @@ async def send_message(
     )
     db.add(assistant_msg)
     await db.flush()
+
 
     # ── Step 7: Update cache with both new messages ────
     await cache.append_message(conversation.id, user_message)
